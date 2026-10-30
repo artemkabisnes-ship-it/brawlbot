@@ -61,7 +61,11 @@ class ScreenCaptureService : Service() {
         var lastTrophyCheck = 0L
         while (BotState.running) {
             try {
-                val frame = captureFrame() ?: run { delay(500); continue }
+                val frame = captureFrame()
+                if (frame == null) {
+                    delay(500)
+                    continue
+                }
 
                 val inMenu = findAndTapIfPresent(frame, "btn_play.png", tap = false)
                 if (inMenu) {
