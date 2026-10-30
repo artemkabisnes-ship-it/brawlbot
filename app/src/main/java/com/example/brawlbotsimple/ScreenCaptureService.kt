@@ -33,13 +33,25 @@ class ScreenCaptureService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
             startForeground(1, buildNotification())
+            showToast("Служба запущена")
+        } catch (e: Exception) {
+            showToast("Ошибка уведомления: ${e.message}")
+        }
 
+        try {
             val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val code = intent?.getIntExtra("code", 0) ?: 0
-            val data = intent?.getParcelableExtra<Intent>("data") ?: return START_NOT_STICKY
+            val data = intent?.getParcelableExtra<Intent>("data") ?: run {
+                showToast("Нет данных экрана")
+                return START_NOT_STICKY
+            }
+            
             projection = mgr.getMediaProjection(code, data)
+            showToast("Захват экрана получен")
 
             setupCapture()
+            showToast("Экран настроен")
+
             enemyDetector = EnemyDetector(this)
             aimBot = AimBot(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
             
@@ -65,7 +77,7 @@ class ScreenCaptureService : Service() {
             }
             showToast("Загружено картинок: ${templates.size}")
         } catch (e: Exception) {
-            showToast("Ошибка загрузки картинок: ${e.message}")
+            showToast("Ошибка картинок: ${e.message}")
         }
     }
 
@@ -102,15 +114,6 @@ class ScreenCaptureService : Service() {
 
                 val enemies = enemyDetector.detectByColor(frame)
                 aimBot.tick(enemies)
-
-                val now = System.currentTimeMillis()
-                if (now - lastTrophyCheck > 5000) {
-                    lastTrophyCheck = now
-                    val t = readTrophies(frame)
-                    if (t != null) {
-                        showToast("Трофеи: $t")
-                    }
-                }
 
                 delay(200)
             } catch (e: Exception) {
@@ -163,21 +166,6 @@ class ScreenCaptureService : Service() {
             }
         }
         return false
-    }
-
-    private suspend fun readTrophies(bitmap: Bitmap): Int? {
-        val crop = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height / 6)
-        val image = InputImage.fromBitmap(crop, 0)
-        return suspendCancellableCoroutine { cont ->
-            recognizer.process(image)
-                .addOnSuccessListener { text ->
-                    val numbers = Regex("\\d{2,5}").findAll(text.text)
-                        .mapNotNull { it.value.toIntOrNull() }
-                        .maxOrNull()
-                    cont.resume(numbers)
-                }
-                .addOnFailureListener { cont.resume(null) }
-        }
     }
 
     private fun showToast(text: String) {
