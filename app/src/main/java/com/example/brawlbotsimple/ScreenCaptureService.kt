@@ -31,21 +31,26 @@ class ScreenCaptureService : Service() {
     private var templates: List<Pair<String, Bitmap>> = emptyList()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(1, buildNotification())
+        try {
+            startForeground(1, buildNotification())
 
-        val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        val code = intent?.getIntExtra("code", 0) ?: 0
-        val data = intent?.getParcelableExtra<Intent>("data") ?: return START_NOT_STICKY
-        projection = mgr.getMediaProjection(code, data)
+            val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            val code = intent?.getIntExtra("code", 0) ?: 0
+            val data = intent?.getParcelableExtra<Intent>("data") ?: return START_NOT_STICKY
+            projection = mgr.getMediaProjection(code, data)
 
-        setupCapture()
-        enemyDetector = EnemyDetector(this)
-        aimBot = AimBot(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
-        
-        loadAllTemplates()
+            setupCapture()
+            enemyDetector = EnemyDetector(this)
+            aimBot = AimBot(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+            
+            loadAllTemplates()
 
-        BotState.running = true
-        scope.launch { botLoop() }
+            BotState.running = true
+            scope.launch { botLoop() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            showToast("Ошибка службы: ${e.message}")
+        }
         return START_STICKY
     }
 
@@ -87,7 +92,6 @@ class ScreenCaptureService : Service() {
                     continue
                 }
 
-                // Ищем кнопку "Играть"
                 val inMenu = checkAndTapTemplate(frame, isPlayButton = true, tap = false)
                 if (inMenu) {
                     showToast("Вижу кнопку Играть! Нажимаю...")
@@ -96,7 +100,6 @@ class ScreenCaptureService : Service() {
                     continue
                 }
 
-                // Ищем врагов
                 val enemies = enemyDetector.detectByColor(frame)
                 aimBot.tick(enemies)
 
@@ -106,10 +109,6 @@ class ScreenCaptureService : Service() {
                     val t = readTrophies(frame)
                     if (t != null) {
                         showToast("Трофеи: $t")
-                        if (t >= BotState.targetTrophies) {
-                            showToast("Цель достигнута! Меняю бойца...")
-                            // ... логика смены бойца (пока пропущена для теста) ...
-                        }
                     }
                 }
 
@@ -140,7 +139,7 @@ class ScreenCaptureService : Service() {
 
     private fun checkAndTapTemplate(bitmap: Bitmap, isPlayButton: Boolean, tap: Boolean): Boolean {
         if (templates.isEmpty()) return false
-        for ((fileName, template) in templates) {
+        for ((_, template) in templates) {
             val isPlayShape = template.width > template.height * 1.5
             if (isPlayShape != isPlayButton) continue
 
