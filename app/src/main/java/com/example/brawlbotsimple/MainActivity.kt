@@ -8,6 +8,7 @@ import android.provider.Settings
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import kotlinx.coroutines.*
 
 class MainActivity : AppCompatActivity() {
 
@@ -36,22 +37,28 @@ class MainActivity : AppCompatActivity() {
             BotState.allCharacters = characters
             BotState.currentIndex = characters.indexOf(BotState.targetCharacter)
 
-            try {
-                val i = Intent(this, ScreenCaptureService::class.java).apply {
-                    putExtra("code", result.resultCode)
-                    putExtra("data", result.data)
+            val finalData = result.data
+            val finalCode = result.resultCode
+
+            Toast.makeText(this, "Подготовка...", Toast.LENGTH_SHORT).show()
+            moveTaskToBack(true)
+
+            // Задержка 2 секунды, чтобы MIUI не убил службу
+            CoroutineScope(Dispatchers.Main).launch {
+                delay(2000)
+                try {
+                    val i = Intent(this@MainActivity, ScreenCaptureService::class.java).apply {
+                        putExtra("code", finalCode)
+                        putExtra("data", finalData)
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(i)
+                    } else {
+                        startService(i)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(i)
-                } else {
-                    startService(i)
-                }
-                Toast.makeText(this, "Бот запущен", Toast.LENGTH_SHORT).show()
-                // Сворачиваем приложение, чтобы бот начал работу
-                moveTaskToBack(true)
-            } catch (e: Exception) {
-                Toast.makeText(this, "Ошибка запуска: ${e.message}", Toast.LENGTH_LONG).show()
-                e.printStackTrace()
             }
         }
     }
@@ -67,15 +74,19 @@ class MainActivity : AppCompatActivity() {
         spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, characters)
         projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
-        // Запрашиваем разрешение на уведомления для Android 13+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+        // Открываем спец. возможности (один раз при старте)
+        try {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
 
-        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-
         btnStart.setOnClickListener {
-            projectionLauncher.launch(projectionManager!!.createScreenCaptureIntent())
+            try {
+                projectionLauncher.launch(projectionManager!!.createScreenCaptureIntent())
+            } catch (e: Exception) {
+                Toast.makeText(this, "Ошибка: ${e.message}", Toast.LENGTH_LONG).show()
+            }
         }
     }
 }
