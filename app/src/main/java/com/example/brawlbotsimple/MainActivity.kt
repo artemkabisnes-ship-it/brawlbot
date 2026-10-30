@@ -81,12 +81,33 @@ class MainActivity : AppCompatActivity() {
             e.printStackTrace()
         }
 
+        // Настраиваем кнопку Запуск/Остановка
         btnStart.setOnClickListener {
-            try {
-                projectionLauncher.launch(projectionManager!!.createScreenCaptureIntent())
-            } catch (e: Exception) {
-                Toast.makeText(this, "Ошибка: ${e.message}", Toast.LENGTH_LONG).show()
+            if (BotState.running) {
+                // Останавливаем бота
+                BotState.running = false
+                stopService(Intent(this, ScreenCaptureService::class.java))
+                btnStart.text = "Запустить бота"
+                Toast.makeText(this, "Бот остановлен", Toast.LENGTH_SHORT).show()
+            } else {
+                // Запускаем бота
+                try {
+                    projectionLauncher.launch(projectionManager!!.createScreenCaptureIntent())
+                    btnStart.text = "Остановить бота"
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Ошибка: ${e.message}", Toast.LENGTH_LONG).show()
+                }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Обновляем текст кнопки, если вернулись в приложение
+        if (BotState.running) {
+            btnStart.text = "Остановить бота"
+        } else {
+            btnStart.text = "Запустить бота"
         }
     }
 }
