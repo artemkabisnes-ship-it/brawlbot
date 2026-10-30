@@ -2,6 +2,7 @@ package com.example.brawlbotsimple
 
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.*
@@ -35,12 +36,23 @@ class MainActivity : AppCompatActivity() {
             BotState.allCharacters = characters
             BotState.currentIndex = characters.indexOf(BotState.targetCharacter)
 
-            val i = Intent(this, ScreenCaptureService::class.java).apply {
-                putExtra("code", result.resultCode)
-                putExtra("data", result.data)
+            try {
+                val i = Intent(this, ScreenCaptureService::class.java).apply {
+                    putExtra("code", result.resultCode)
+                    putExtra("data", result.data)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(i)
+                } else {
+                    startService(i)
+                }
+                Toast.makeText(this, "Бот запущен", Toast.LENGTH_SHORT).show()
+                // Сворачиваем приложение, чтобы бот начал работу
+                moveTaskToBack(true)
+            } catch (e: Exception) {
+                Toast.makeText(this, "Ошибка запуска: ${e.message}", Toast.LENGTH_LONG).show()
+                e.printStackTrace()
             }
-            startForegroundService(i)
-            Toast.makeText(this, "Бот запущен", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -54,6 +66,11 @@ class MainActivity : AppCompatActivity() {
 
         spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, characters)
         projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+
+        // Запрашиваем разрешение на уведомления для Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+        }
 
         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
 
