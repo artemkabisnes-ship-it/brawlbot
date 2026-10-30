@@ -28,6 +28,7 @@ class ScreenCaptureService : Service() {
     private lateinit var aimBot: AimBot
     
     private var templates: List<Pair<String, Bitmap>> = emptyList()
+    private var trophiesReached = false // Флаг: достигли ли мы цели по трофеям
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(1, buildNotification())
@@ -85,6 +86,15 @@ class ScreenCaptureService : Service() {
                     continue
                 }
 
+                // Если мы только что достигли цели по трофеям, делаем смену бойца
+                if (trophiesReached) {
+                    switchCharacter()
+                    trophiesReached = false
+                    delay(5000) // Ждем загрузки нового боя
+                    continue
+                }
+
+                // Проверяем, не в меню ли мы (видим кнопку Играть)
                 val inMenu = checkAndTapTemplate(frame, isPlayButton = true, tap = false)
                 if (inMenu) {
                     checkAndTapTemplate(frame, isPlayButton = true, tap = true)
@@ -92,18 +102,17 @@ class ScreenCaptureService : Service() {
                     continue
                 }
 
+                // В бою: стреляем по врагам
                 val enemies = enemyDetector.detectByColor(frame)
                 aimBot.tick(enemies)
 
+                // Раз в 5 секунд проверяем трофеи
                 val now = System.currentTimeMillis()
                 if (now - lastTrophyCheck > 5000) {
                     lastTrophyCheck = now
                     val t = readTrophies(frame)
                     if (t != null && t >= BotState.targetTrophies) {
-                        BotState.currentIndex++
-                        if (BotState.currentIndex >= BotState.allCharacters.size) BotState.currentIndex = 0
-                        BotState.targetCharacter = BotState.allCharacters[BotState.currentIndex]
-                        BotState.targetTrophies += 500
+                        trophiesReached = true // Ставим флаг, что пора менять
                     }
                 }
 
@@ -113,6 +122,33 @@ class ScreenCaptureService : Service() {
                 delay(2000)
             }
         }
+    }
+
+    // Слепая смена бойца (без картинок)
+    private fun switchCharacter() {
+        val screenW = resources.displayMetrics.widthPixels.toFloat()
+        val screenH = resources.displayMetrics.heightPixels.toFloat()
+
+        // 1. Жмем кнопку "Играть", чтобы выйти в меню выбора
+        checkAndTapTemplate(captureFrame() ?: return, isPlayButton = true, tap = true)
+        Thread.sleep(2000)
+
+        // 2. Делаем свайп слева направо (листаем карусель бойцов)
+        TapService.instance?.drag(screenW * 0.8f, screenH * 0.5f, screenW * 0.2f, screenH * 0.5f, 300)
+        Thread.sleep(1500)
+        
+        // 3. Жмем в центр (выбираем того, на кого пролистнули)
+        TapService.instance?.tap(screenW * 0.5f, screenH * 0.5f)
+        Thread.sleep(1500)
+        
+        // 4. Жмем "Играть" внизу (начинаем бой)
+        TapService.instance?.tap(screenW * 0.5f, screenH * 0.9f)
+
+        // Сдвигаем индекс в списке и цель по трофеям
+        BotState.currentIndex++
+        if (BotState.currentIndex >= BotState.allCharacters.size) BotState.currentIndex = 0
+        BotState.targetCharacter = BotState.allCharacters[BotState.currentIndex]
+        BotState.targetTrophies += 500
     }
 
     private fun captureFrame(): Bitmap? {
@@ -134,7 +170,6 @@ class ScreenCaptureService : Service() {
 
     private fun checkAndTapTemplate(bitmap: Bitmap, isPlayButton: Boolean, tap: Boolean): Boolean {
         if (templates.isEmpty()) return false
-        
         for ((_, template) in templates) {
             val isPlayShape = template.width > template.height * 1.5
             if (isPlayShape != isPlayButton) continue
