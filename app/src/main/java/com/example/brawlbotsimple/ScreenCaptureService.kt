@@ -7,7 +7,9 @@ import android.graphics.Bitmap
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.google.mlkit.vision.common.InputImage
@@ -27,41 +29,36 @@ class ScreenCaptureService : Service() {
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private lateinit var enemyDetector: EnemyDetector
     private lateinit var aimBot: AimBot
+    private var wakeLock: PowerManager.WakeLock? = null
     
     private var templates: List<Pair<String, Bitmap>> = emptyList()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
             startForeground(1, buildNotification())
-            showToast("Служба запущена")
-        } catch (e: Exception) {
-            showToast("Ошибка уведомления: ${e.message}")
-        }
+            
+            // Не даем телефону усыпить процесс
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BrawlBot::BotWakeLock")
+            wakeLock?.acquire(10 * 60 * 1000L) // 10 минут
 
-        try {
             val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val code = intent?.getIntExtra("code", 0) ?: 0
-            val data = intent?.getParcelableExtra<Intent>("data") ?: run {
-                showToast("Нет данных экрана")
-                return START_NOT_STICKY
-            }
+            val data = intent?.getParcelableExtra<Intent>("data") ?: return START_NOT_STICKY
             
             projection = mgr.getMediaProjection(code, data)
-            showToast("Захват экрана получен")
-
             setupCapture()
-            showToast("Экран настроен")
-
+            
             enemyDetector = EnemyDetector(this)
             aimBot = AimBot(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
-            
             loadAllTemplates()
 
             BotState.running = true
             scope.launch { botLoop() }
+            
         } catch (e: Exception) {
             e.printStackTrace()
-            showToast("Ошибка службы: ${e.message}")
+            showToast("Ошибка: ${e.message}")
         }
         return START_STICKY
     }
@@ -75,9 +72,13 @@ class ScreenCaptureService : Service() {
                     if (bmp != null) fileName to bmp else null
                 } else null
             }
-            showToast("Загружено картинок: ${templates.size}")
+            if (templates.isEmpty()) {
+                updateNotification("Ошибка: картинки не найдены!")
+            } else {
+                updateNotification("Картинки загружены: ${templates.size}")
+            }
         } catch (e: Exception) {
-            showToast("Ошибка картинок: ${e.message}")
+            updateNotification("Ошибка картинок: ${e.message}")
         }
     }
 
@@ -95,7 +96,7 @@ class ScreenCaptureService : Service() {
     }
 
     private suspend fun botLoop() {
-        var lastTrophyCheck = 0L
+        var inMenuCount = 0
         while (BotState.running) {
             try {
                 val frame = captureFrame()
@@ -106,14 +107,17 @@ class ScreenCaptureService : Service() {
 
                 val inMenu = checkAndTapTemplate(frame, isPlayButton = true, tap = false)
                 if (inMenu) {
-                    showToast("Вижу кнопку Играть! Нажимаю...")
-                    checkAndTapTemplate(frame, isPlayButton = true, tap = true)
-                    delay(3000)
-                    continue
+                    inMenuCount++
+                    if (inMenuCount > 3) { // Если видим кнопку 3 раза подряд, нажимаем
+                        checkAndTapTemplate(frame, isPlayButton = true, tap = true)
+                        inMenuCount = 0
+                        delay(3000)
+                    }
+                } else {
+                    inMenuCount = 0
+                    val enemies = enemyDetector.detectByColor(frame)
+                    aimBot.tick(enemies)
                 }
-
-                val enemies = enemyDetector.detectByColor(frame)
-                aimBot.tick(enemies)
 
                 delay(200)
             } catch (e: Exception) {
@@ -156,7 +160,7 @@ class ScreenCaptureService : Service() {
             Imgproc.matchTemplate(srcMat, tplMat, result, Imgproc.TM_CCOEFF_NORMED)
             val mm = Core.minMaxLoc(result)
             
-            if (mm.maxVal >= 0.70) {
+            if (mm.maxVal >= 0.65) { // Снизил порог до 65% для лучшего распознавания
                 if (tap) {
                     val cx = (mm.maxLoc.x + tplMat.cols() / 2).toFloat()
                     val cy = (mm.maxLoc.y + tplMat.rows() / 2).toFloat()
@@ -174,6 +178,16 @@ class ScreenCaptureService : Service() {
         }
     }
 
+    private fun updateNotification(text: String) {
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        val notif = NotificationCompat.Builder(this, "bot")
+            .setContentTitle("BrawlBot")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_menu_compass)
+            .build()
+        nm.notify(1, notif)
+    }
+
     private fun buildNotification(): Notification {
         val ch = NotificationChannel("bot", "Bot", NotificationManager.IMPORTANCE_LOW)
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
@@ -185,6 +199,7 @@ class ScreenCaptureService : Service() {
 
     override fun onDestroy() {
         BotState.running = false
+        wakeLock?.release()
         scope.cancel()
         projection?.stop()
         super.onDestroy()
