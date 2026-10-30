@@ -11,27 +11,19 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.*
 import org.opencv.android.Utils
 import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
-import kotlin.coroutines.resume
 
 class ScreenCaptureService : Service() {
 
     private var projection: MediaProjection? = null
     private var imageReader: ImageReader? = null
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private lateinit var enemyDetector: EnemyDetector
     private lateinit var aimBot: AimBot
     private var wakeLock: PowerManager.WakeLock? = null
-    
-    private var templates: List<Pair<String, Bitmap>> = emptyList()
-    private var inMenuCount = 0
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
@@ -50,7 +42,6 @@ class ScreenCaptureService : Service() {
             
             enemyDetector = EnemyDetector(this)
             aimBot = AimBot(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
-            loadAllTemplates()
 
             BotState.running = true
             scope.launch { botLoop() }
@@ -59,18 +50,6 @@ class ScreenCaptureService : Service() {
             e.printStackTrace()
         }
         return START_STICKY
-    }
-
-    private fun loadAllTemplates() {
-        try {
-            val files = assets.list("templates") ?: emptyArray()
-            templates = files.mapNotNull { fileName ->
-                if (fileName.endsWith(".png") || fileName.endsWith(".jpg")) {
-                    val bmp = assets.open("templates/$fileName").use { android.graphics.BitmapFactory.decodeStream(it) }
-                    if (bmp != null) fileName to bmp else null
-                } else null
-            }
-        } catch (e: Exception) { }
     }
 
     private fun setupCapture() {
@@ -87,6 +66,13 @@ class ScreenCaptureService : Service() {
     }
 
     private suspend fun botLoop() {
+        val screenW = resources.displayMetrics.widthPixels.toFloat()
+        val screenH = resources.displayMetrics.heightPixels.toFloat()
+        
+        // Координаты правого нижнего угла (кнопка Играть)
+        val playBtnX = screenW * 0.85f
+        val playBtnY = screenH * 0.90f
+
         while (BotState.running) {
             try {
                 val frame = captureFrame()
@@ -95,29 +81,19 @@ class ScreenCaptureService : Service() {
                     continue
                 }
 
-                // Проверяем, в меню ли мы (ищем кнопку Играть)
-                val inMenu = checkAndTapTemplate(frame, isPlayButton = true, tap = false)
-                if (inMenu) {
-                    inMenuCount++
-                    if (inMenuCount > 2) {
-                        checkAndTapTemplate(frame, isPlayButton = true, tap = true)
-                        inMenuCount = 0
-                        delay(3000)
-                    }
-                } else {
-                    // Если кнопки Играть нет, значит мы, скорее всего, в бою
-                    inMenuCount = 0
-                    
-                    // Ищем врагов и действуем
-                    val enemies = enemyDetector.detectByColor(frame)
-                    aimBot.tick(enemies)
-                    
-                    if (enemies.isEmpty()) {
-                        delay(1000)
-                    } else {
-                        delay(200) // Реагируем быстро, если видим врага
-                    }
-                }
+                // 1. Пытаемся понять, в меню мы или в бою.
+                // Если мы в меню, кнопка "Играть" обычно ярко-желтая.
+                // Но чтобы не гадать, мы просто делаем слепой тап в правый нижний угол раз в 3 секунды.
+                // В меню это нажмет "Играть", в бою это нажмет атаку (не страшно).
+                TapService.instance?.tap(playBtnX, playBtnY)
+                delay(3000)
+
+                // 2. В бою (после тапа) ищем врагов и бежим к ним
+                val enemies = enemyDetector.detectByColor(frame)
+                aimBot.tick(enemies)
+                
+                delay(200)
+
             } catch (e: Exception) {
                 e.printStackTrace()
                 delay(2000)
@@ -142,39 +118,11 @@ class ScreenCaptureService : Service() {
         } finally { image.close() }
     }
 
-    private fun checkAndTapTemplate(bitmap: Bitmap, isPlayButton: Boolean, tap: Boolean): Boolean {
-        if (templates.isEmpty()) return false
-        for ((_, template) in templates) {
-            val isPlayShape = template.width > template.height * 1.5
-            if (isPlayShape != isPlayButton) continue
-
-            val srcMat = Mat(); val tplMat = Mat()
-            Utils.bitmapToMat(bitmap, srcMat)
-            Utils.bitmapToMat(template, tplMat)
-            Imgproc.cvtColor(srcMat, srcMat, Imgproc.COLOR_RGBA2RGB)
-            Imgproc.cvtColor(tplMat, tplMat, Imgproc.COLOR_RGBA2RGB)
-
-            val result = Mat()
-            Imgproc.matchTemplate(srcMat, tplMat, result, Imgproc.TM_CCOEFF_NORMED)
-            val mm = Core.minMaxLoc(result)
-            
-            if (mm.maxVal >= 0.65) {
-                if (tap) {
-                    val cx = (mm.maxLoc.x + tplMat.cols() / 2).toFloat()
-                    val cy = (mm.maxLoc.y + tplMat.rows() / 2).toFloat()
-                    TapService.instance?.tap(cx, cy)
-                }
-                return true
-            }
-        }
-        return false
-    }
-
     private fun buildNotification(): Notification {
         val ch = NotificationChannel("bot", "Bot", NotificationManager.IMPORTANCE_LOW)
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
         return NotificationCompat.Builder(this, "bot")
-            .setContentTitle("BrawlBot работает")
+            .setContentTitle("BrawlBot работает (Гибрид)")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .build()
     }
