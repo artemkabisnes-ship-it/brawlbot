@@ -17,6 +17,7 @@ import org.opencv.android.Utils
 import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
 import kotlin.coroutines.resume
+import java.io.File
 
 class ScreenCaptureService : Service() {
 
@@ -26,6 +27,9 @@ class ScreenCaptureService : Service() {
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private lateinit var enemyDetector: EnemyDetector
     private lateinit var aimBot: AimBot
+    
+    // Список всех наших картинок
+    private var templates: List<Pair<String, Bitmap>> = emptyList()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(1, buildNotification())
@@ -38,10 +42,27 @@ class ScreenCaptureService : Service() {
         setupCapture()
         enemyDetector = EnemyDetector(this)
         aimBot = AimBot(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+        
+        loadAllTemplates() // Загружаем картинки
 
         BotState.running = true
         scope.launch { botLoop() }
         return START_STICKY
+    }
+
+    // Читаем ВСЕ картинки из папки templates
+    private fun loadAllTemplates() {
+        try {
+            val files = assets.list("templates") ?: emptyArray()
+            templates = files.mapNotNull { fileName ->
+                if (fileName.endsWith(".png") || fileName.endsWith(".jpg")) {
+                    val bmp = assets.open("templates/$fileName").use { android.graphics.BitmapFactory.decodeStream(it) }
+                    if (bmp != null) fileName to bmp else null
+                } else null
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun setupCapture() {
@@ -67,16 +88,19 @@ class ScreenCaptureService : Service() {
                     continue
                 }
 
-                val inMenu = findAndTapIfPresent(frame, "btn_play.png", tap = false)
+                // Проверяем, не в меню ли мы
+                val inMenu = checkAndTapTemplate(frame, isPlayButton = true, tap = false)
                 if (inMenu) {
-                    findAndTapIfPresent(frame, "btn_play.png", tap = true)
+                    checkAndTapTemplate(frame, isPlayButton = true, tap = true)
                     delay(3000)
                     continue
                 }
 
+                // В бою: ищем врагов и стреляем
                 val enemies = enemyDetector.detectByColor(frame)
                 aimBot.tick(enemies)
 
+                // Раз в 5 секунд проверяем трофеи
                 val now = System.currentTimeMillis()
                 if (now - lastTrophyCheck > 5000) {
                     lastTrophyCheck = now
@@ -114,25 +138,38 @@ class ScreenCaptureService : Service() {
         } finally { image.close() }
     }
 
-    private fun findAndTapIfPresent(bitmap: Bitmap, templateName: String, tap: Boolean): Boolean {
-        val template = loadTemplate(templateName) ?: return false
-        val srcMat = Mat(); val tplMat = Mat()
-        Utils.bitmapToMat(bitmap, srcMat)
-        Utils.bitmapToMat(template, tplMat)
-        Imgproc.cvtColor(srcMat, srcMat, Imgproc.COLOR_RGBA2RGB)
-        Imgproc.cvtColor(tplMat, tplMat, Imgproc.COLOR_RGBA2RGB)
+    // Ищем картинку на экране. isPlayButton = true означает, что мы ищем именно желтую кнопку
+    private fun checkAndTapTemplate(bitmap: Bitmap, isPlayButton: Boolean, tap: Boolean): Boolean {
+        if (templates.isEmpty()) return false
+        
+        // Берем первую картинку из списка (у нас их две: кнопка Играть и кнопка Атака)
+        // Чтобы не путать, мы просто проверяем обе
+        for ((fileName, template) in templates) {
+            // Определяем, является ли эта картинка кнопкой "Играть" (по размеру или пропорциям)
+            // Желтая кнопка широкая, а атака квадратная. 
+            val isPlayShape = template.width > template.height * 1.5
+            if (isPlayShape != isPlayButton) continue
 
-        val result = Mat()
-        Imgproc.matchTemplate(srcMat, tplMat, result, Imgproc.TM_CCOEFF_NORMED)
-        val mm = Core.minMaxLoc(result)
-        return if (mm.maxVal >= 0.75) {
-            if (tap) {
-                val cx = (mm.maxLoc.x + tplMat.cols() / 2).toFloat()
-                val cy = (mm.maxLoc.y + tplMat.rows() / 2).toFloat()
-                TapService.instance?.tap(cx, cy)
+            val srcMat = Mat(); val tplMat = Mat()
+            Utils.bitmapToMat(bitmap, srcMat)
+            Utils.bitmapToMat(template, tplMat)
+            Imgproc.cvtColor(srcMat, srcMat, Imgproc.COLOR_RGBA2RGB)
+            Imgproc.cvtColor(tplMat, tplMat, Imgproc.COLOR_RGBA2RGB)
+
+            val result = Mat()
+            Imgproc.matchTemplate(srcMat, tplMat, result, Imgproc.TM_CCOEFF_NORMED)
+            val mm = Core.minMaxLoc(result)
+            
+            if (mm.maxVal >= 0.70) { // 70% совпадения достаточно
+                if (tap) {
+                    val cx = (mm.maxLoc.x + tplMat.cols() / 2).toFloat()
+                    val cy = (mm.maxLoc.y + tplMat.rows() / 2).toFloat()
+                    TapService.instance?.tap(cx, cy)
+                }
+                return true
             }
-            true
-        } else false
+        }
+        return false
     }
 
     private suspend fun readTrophies(bitmap: Bitmap): Int? {
@@ -149,10 +186,6 @@ class ScreenCaptureService : Service() {
                 .addOnFailureListener { cont.resume(null) }
         }
     }
-
-    private fun loadTemplate(name: String): Bitmap? = try {
-        assets.open("templates/$name").use { android.graphics.BitmapFactory.decodeStream(it) }
-    } catch (e: Exception) { null }
 
     private fun buildNotification(): Notification {
         val ch = NotificationChannel("bot", "Bot", NotificationManager.IMPORTANCE_LOW)
