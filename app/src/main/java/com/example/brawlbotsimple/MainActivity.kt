@@ -15,7 +15,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnStart: Button
     private var projectionManager: MediaProjectionManager? = null
 
-    private val characters = listOf("Shelly", "Colt", "Bull", "Poco", "El Primo", "Nita")
+    private val characters = listOf(
+        "Shelly", "Colt", "Bull", "Jessie", "Nita", "Dynamike", "El Primo", "Brock", "Barley", "Poco",
+        "Rosa", "Darryl", "Penny", "Carl", "Jacky", "Gus", "Bo", "Piper", "Pam", "Frank", "Bibi",
+        "Bea", "Emz", "Mr. P", "Max", "Tick", "8-Bit", "Rico", "Spike", "Crow", "Leon", "Sandy",
+        "Amber", "Mortis", "Tara", "Gene", "Sprout", "Byron", "Squeak", "Lou", "Ruffs", "Belle",
+        "Buzz", "Griff", "Ash", "Lola", "Meg", "Surge", "Gale", "Colonel Ruffs", "Fang", "Eve",
+        "Janet", "Otis", "Sam", "Buster", "Gray", "Mandy", "R-T", "Willow", "Maisie", "Hank",
+        "Doug", "Pearl", "Chuck", "Charlie", "Mico", "Melodie", "Larry & Lawrie", "Angelo", "Draco",
+        "Berry", "Clancy", "Kenji", "Moe", "Shade", "Juju", "Meeple", "Ollie", "Lumi", "Finx"
+    )
 
     private val projectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
